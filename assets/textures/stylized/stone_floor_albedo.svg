@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+ <filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.02" numOctaves="4" seed="21"/><feColorMatrix values="0.25 0 0 0 0.22  0 0.24 0 0 0.23  0 0 0.22 0 0.2  0 0 0 0.3 0"/></filter>
+ <pattern id="s" width="256" height="256" patternUnits="userSpaceOnUse"><rect width="256" height="256" fill="#817b6d"/><rect x="6" y="6" width="244" height="244" rx="16" fill="#969082"/><path d="M18 80 C70 48 130 96 190 58 M28 180 C92 142 160 208 232 166" fill="none" stroke="#706b61" stroke-width="9" opacity=".35"/><rect x="0" y="0" width="256" height="8" fill="#4c4b45"/><rect x="0" y="0" width="8" height="256" fill="#4c4b45"/></pattern>
+</defs>
+<rect width="1024" height="1024" fill="url(#s)"/><rect width="1024" height="1024" filter="url(#n)" opacity=".35"/>
+</svg>
