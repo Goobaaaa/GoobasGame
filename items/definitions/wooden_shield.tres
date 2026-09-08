@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="ItemDefinition" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://inventory/item_definition.gd" id="1"]
+
+[ext_resource type="Texture2D" path="res://items/icons/wooden_shield.svg" id="2"]
+
+[resource]
+script = ExtResource("1")
+icon = ExtResource("2")
+id = "wooden_shield"
+display_name = "Wooden Shield"
+description = "A wooden shield from the Lantern Lane adventurer supplies."
+category = "Shield"
+grid_size = Vector2i(2, 2)
+max_stack = 1
+value = 18
+weight = 1.0
+equipment_slots = PackedStringArray("off_hand")
+modifiers = {"armour":5}

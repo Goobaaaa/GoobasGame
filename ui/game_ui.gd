@@ -1,5 +1,7 @@
 class_name GameUI
 extends CanvasLayer
+const StockPanel = preload("res://ui/stock_order_panel.gd")
+const ShopName = preload("res://shops/shop_naming.gd")
 var game: Node
 var hud: Control
 var modal: PanelContainer
@@ -10,10 +12,29 @@ var status: Label
 var hints: Label
 var order_labels: Dictionary = {}
 var modal_kind := ""
-var address: LineEdit
 var notify_time := 0.0
+var inventory_panel: InventoryPanel
+var sale_panel: SalePlatformPanel
+var stock_panel
+var shop_name_input: LineEdit
+var shop_name_feedback: Label
+
+func show_sale_platform(platform_id: String) -> void:
+	modal_kind = "sale_platform"
+	clear("Stock your sale display","Buy reference = current catalog cost (item value if unavailable). Profit is an estimate, not a completed sale.")
+	modal.offset_left = -560
+	modal.offset_right = 560
+	modal.offset_top = -310
+	modal.offset_bottom = 310
+	sale_panel = SalePlatformPanel.new()
+	sale_panel.platform_id = platform_id
+	content.add_child(sale_panel)
+	button("Close display",close)
 
 func _ready() -> void:
+	# Item tooltips should feel immediate in an item-heavy interface.
+	# The board/card callbacks still validate their records before rendering.
+	ProjectSettings.set_setting("gui/timers/tooltip_delay_sec",0.05)
 	var theme := Theme.new()
 	theme.default_font_size = 18
 	var panel_style := StyleBoxFlat.new()
@@ -91,13 +112,37 @@ func _ready() -> void:
 	content = VBoxContainer.new()
 	content.add_theme_constant_override("separation",9)
 	modal.add_child(content)
+	inventory_panel = InventoryPanel.new()
+	inventory_panel.game_ui = self
+	root.add_child(inventory_panel)
+	hints.text += "   •   I Inventory"
 	hud.hide()
 	show_main()
 
 func modal_open() -> bool:
-	return modal.visible
+	return modal.visible or (is_instance_valid(inventory_panel) and inventory_panel.visible)
+
+func show_inventory(with_loot: bool = false, source: String = "supplies") -> void:
+	modal.hide()
+	modal_kind = "inventory"
+	inventory_panel.show_loot = with_loot
+	inventory_panel.loot_source = source
+	inventory_panel.refresh()
+	inventory_panel.show()
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 func clear(title: String, subtitle: String = "") -> void:
+	sale_panel = null
+	stock_panel = null
+	shop_name_input = null
+	shop_name_feedback = null
+	modal.offset_left = -340
+	modal.offset_right = 340
+	modal.offset_top = -285
+	modal.offset_bottom = 285
+	if is_instance_valid(inventory_panel):
+		inventory_panel.board.cancel_drag()
+		inventory_panel.hide()
 	for child in content.get_children():
 		content.remove_child(child)
 		child.queue_free()
@@ -123,6 +168,9 @@ func button(title: String, action: Callable) -> Button:
 	return b
 
 func close() -> void:
+	if is_instance_valid(inventory_panel):
+		inventory_panel.board.cancel_drag()
+		inventory_panel.hide()
 	modal.hide()
 	modal_kind = ""
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -134,22 +182,8 @@ func show_main() -> void:
 	button("New Game",func(): new_game(false))
 	var has_save := not SaveStore.read_save().is_empty()
 	if has_save: button("Continue",func(): launch(false,false))
-	button("Host Game • LAN",func(): launch(not has_save,true))
-	address = LineEdit.new()
-	address.placeholder_text = "Host LAN IP address"
-	address.text = "127.0.0.1"
-	content.add_child(address)
-	button("Join Game",func():
-		var err: Error = Session.join_game(address.text)
-		if err != OK: notify("Join failed: " + error_string(err))
-		else: show_connecting())
-	text("Host and guests share one shop, purse and stock ledger.\nHost loads the local save, or starts fresh if none exists.",15)
+	text("Single-player adventure • Your progress saves locally.",15)
 	button("Quit",func(): game.get_tree().quit())
-
-func show_connecting() -> void:
-	modal_kind = "connecting"
-	clear("Connecting…","Waiting for the LAN host (10 second timeout).")
-	button("Cancel",func(): Session.leave())
 
 func new_game(lan: bool) -> void:
 	if FileAccess.file_exists(SaveStore.path):
@@ -165,18 +199,61 @@ func launch(fresh: bool, lan: bool) -> void:
 
 func show_pause() -> void:
 	modal_kind = "pause"
-	clear("Take a breather","Your co-op world continues while this menu is open.")
+	clear("Take a breather","Your single-player adventure")
 	button("Resume",close)
 	button("Save world",func(): Session.request_action("save"))
 	button("Return to Main Menu",func(): Session.leave())
-	text("LAN: UDP 24567 • Up to 8 merchants\nSave belongs to the host. Guests reconnect at the street.",16)
+	text("Your progress is saved on this computer.",16)
 
 func show_purchase(shop_id: int) -> void:
 	modal_kind = "purchase"
 	clear(Catalog.SHOP_NAMES[shop_id],"Shop deed • 300 gold")
-	text("Unlock a 6 × 6 metre shop and your own IMP supplier.\nThe whole co-op can furnish the shop and order stock.")
-	button("Purchase • 300 gold",func(): Session.request_action("buy",{"shop":shop_id}); close())
+	text("Unlock a 6 × 6 metre shop and your own IMP supplier.\nFurnish your shop and order stock.")
+	button("Purchase • 300 gold",func():
+		var before := int(Session.state.purchased_shop)
+		Session.request_action("buy",{"shop":shop_id})
+		if int(Session.state.purchased_shop) == shop_id and before != shop_id:
+			close()
+			show_shop_naming()
+	)
 	button("Cancel",close)
+
+func show_shop_naming() -> void:
+	modal_kind = "shop_naming"
+	clear("NAME YOUR SHOP","Your adventure starts here.\nWhat would you like to call your shop?")
+	text("Choose a memorable name for your new business.",16,Color("c6d0cc"))
+	shop_name_input = LineEdit.new()
+	shop_name_input.placeholder_text = "The Silver Griffin"
+	shop_name_input.max_length = ShopName.MAX_LENGTH
+	shop_name_input.custom_minimum_size.y = 44
+	shop_name_input.text_changed.connect(_shop_name_changed)
+	content.add_child(shop_name_input)
+	text("3–30 characters",14,Color("aebdb9"))
+	shop_name_feedback = text(" ",14,Color("f08a83"))
+	var confirm := button("Confirm",_confirm_shop_name)
+	confirm.name = "ConfirmShopName"
+	shop_name_input.grab_focus()
+	_shop_name_changed(shop_name_input.text)
+	button("Cancel",func(): close())
+
+func _shop_name_changed(value: String) -> void:
+	if not is_instance_valid(shop_name_feedback): return
+	var error := ShopName.validate(value)
+	shop_name_feedback.text = " " if error.is_empty() else error
+	shop_name_feedback.add_theme_color_override("font_color",Color("9fe3ae") if error.is_empty() else Color("f08a83"))
+	for child in content.get_children():
+		if child is Button and child.name == "ConfirmShopName": child.disabled = not error.is_empty()
+
+func _confirm_shop_name() -> void:
+	if not is_instance_valid(shop_name_input): return
+	var name := ShopName.normalize(shop_name_input.text)
+	var error := ShopName.validate(name)
+	if not error.is_empty():
+		_shop_name_changed(name)
+		return
+	var previous := str(Session.state.get("shop_name",""))
+	Session.request_action("set_shop_name",{"name":name})
+	if str(Session.state.get("shop_name","")) != previous: close()
 
 func show_furniture() -> void:
 	modal_kind = "furniture"
@@ -189,41 +266,21 @@ func show_furniture() -> void:
 
 func show_stock() -> void:
 	modal_kind = "stock"
-	clear("Pip's stock ledger","Orders are saved immediately. Physical delivery comes later.")
-	for id in Catalog.PRODUCTS:
-		var d: Dictionary = Catalog.PRODUCTS[id]
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation",10)
-		content.add_child(row)
-		var icon := Label.new()
-		icon.text = d.icon
-		icon.custom_minimum_size.x = 35
-		icon.add_theme_color_override("font_color",Color(d.color))
-		row.add_child(icon)
-		var label := Label.new()
-		label.text = "%s • %dg\n%s  /  ordered: %d" % [d.name,d.price,d.category,Session.state.ordered_stock.get(id,0)]
-		label.add_theme_font_size_override("font_size",15)
-		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(label)
-		order_labels[id] = label
-		var quantity := SpinBox.new()
-		quantity.min_value = 1
-		quantity.max_value = 99
-		quantity.value = 1
-		quantity.custom_minimum_size.x = 85
-		row.add_child(quantity)
-		var buy := Button.new()
-		buy.text = "Order"
-		buy.custom_minimum_size.x = 78
-		buy.pressed.connect(func(): Session.request_action("order",{"id":id,"quantity":int(quantity.value)}))
-		row.add_child(buy)
+	clear("Pip's stock ledger","BUY adds to your backpack · PLACE DELIVERY ORDER arrives in 5 minutes")
+	modal.offset_left = -520
+	modal.offset_right = 520
+	modal.offset_top = -330
+	modal.offset_bottom = 330
+	stock_panel = StockPanel.new()
+	content.add_child(stock_panel)
+	order_labels = stock_panel.labels
 	button("Close ledger",close)
 
 func refresh() -> void:
-	money.text = "LANTERN LANE   /   %d gold\n%s  •  %d merchant(s)" % [Session.state.money,"Shared co-op" if Session.online else "Solo business",Session.players.size()]
-	for id in order_labels:
-		var d: Dictionary = Catalog.PRODUCTS[id]
-		order_labels[id].text = "%s • %dg\n%s  /  ordered: %d" % [d.name,d.price,d.category,Session.state.ordered_stock.get(id,0)]
+	if is_instance_valid(sale_panel) and modal.visible and modal_kind == "sale_platform": sale_panel.refresh()
+	if is_instance_valid(inventory_panel) and inventory_panel.visible: inventory_panel.refresh()
+	if is_instance_valid(stock_panel) and modal.visible and modal_kind == "stock": stock_panel.refresh()
+	money.text = "LANTERN LANE   /   %d gold\nSingle-player" % Session.state.money
 
 func notify(value: String) -> void:
 	status.text = value

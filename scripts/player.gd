@@ -8,9 +8,12 @@ var target_pos := Vector3.ZERO
 var target_yaw := 0.0
 var send_clock := 0.0
 var game: Node
+var stats: Dictionary = EquipmentRules.BASE_STATS.duplicate()
 const SPEED = 4.0
 
 func _ready() -> void:
+	Session.state_changed.connect(_refresh_stats)
+	_refresh_stats()
 	collision_layer = 2
 	collision_mask = 1
 	var collision := CollisionShape3D.new()
@@ -61,8 +64,8 @@ func _physics_process(delta: float) -> void:
 		input = Input.get_vector("left","right","forward","back")
 		if Input.is_action_just_pressed("jump") and is_on_floor(): velocity.y = 5.0
 	var direction := transform.basis * Vector3(input.x,0,input.y)
-	velocity.x = direction.x * SPEED
-	velocity.z = direction.z * SPEED
+	velocity.x = direction.x * maxf(0.0,float(stats.get("movement_speed",SPEED)))
+	velocity.z = direction.z * maxf(0.0,float(stats.get("movement_speed",SPEED)))
 	if not is_on_floor(): velocity.y -= 15.0 * delta
 	move_and_slide()
 	if position.y < -3: teleport(Vector3(0,0.2,4))
@@ -76,6 +79,9 @@ func teleport(pos: Vector3) -> void:
 	target_pos = pos
 	velocity = Vector3.ZERO
 	Session.send_pose(position,rotation.y,head.rotation.x)
+
+func _refresh_stats() -> void:
+	stats = Session.inventory_for(peer_id).final_stats()
 
 func look_target() -> Interactable:
 	var from := camera.global_position

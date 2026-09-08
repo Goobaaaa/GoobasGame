@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="ItemDefinition" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://inventory/item_definition.gd" id="1"]
+
+[ext_resource type="Texture2D" path="res://items/icons/iron_helmet.svg" id="2"]
+
+[resource]
+script = ExtResource("1")
+icon = ExtResource("2")
+id = "iron_helmet"
+display_name = "Iron Helmet"
+description = "A iron helmet from the Lantern Lane adventurer supplies."
+category = "Armour"
+grid_size = Vector2i(2, 2)
+max_stack = 1
+value = 10
+weight = 1.0
+equipment_slots = PackedStringArray("head")
+modifiers = {"armour":8,"strength":2,"movement_speed":-1}

@@ -5,6 +5,7 @@ var failures := 0
 var saw_guest := false
 var saw_move := false
 var saw_order := false
+var saw_inventory := false
 
 func check(condition: bool, label: String) -> void:
 	if condition: print("PASS ["+role+"]: "+label)
@@ -32,9 +33,13 @@ func _ready() -> void:
 				for id in Session.players:
 					if id != 1 and Session.players[id].pos.z < 0: saw_move = true
 			if Session.state.ordered_stock.get("bread",0) == 2: saw_order = true
+			for key in Session.state.inventories:
+				if key != "1" and Session.state.inventories[key].equipment.has("main_hand"): saw_inventory = true
 		check(saw_guest,"Guest registered and spawned")
 		check(saw_move,"Guest movement received")
 		check(saw_order,"Guest stock request validated on host")
+		check(saw_inventory,"Guest weapon equipped authoritatively on host")
+		check(Session.inventory_for(1).data.items.is_empty(),"Guest inventory actions do not affect host inventory")
 		check(Session.state.purchased_shop == 1,"Guest purchase shared")
 		check(Session.state.furniture.size() == 1,"Guest furniture replicated")
 		check(Session.players.size() == 1,"Disconnected guests removed")
@@ -51,9 +56,21 @@ func _ready() -> void:
 				check(Session.state.furniture.size() == 1,"Late join receives furniture")
 				check(Session.state.ordered_stock.get("bread",0) == 2,"Late join receives orders")
 				check(game.world.imp != null,"Late join spawns IMP")
+				check(Session.inventory_for(Session.local_id()).data.items.is_empty(),"Late join has independent inventory")
 			else:
 				await wait(0.4)
 				check(game.players[1].position.x < -1.0 and game.players[1].model.visible,"Host movement and remote avatar rendered on guest")
+				game.local_player.teleport(Vector3(-1,0.1,3))
+				await wait(0.3)
+				Session.request_action("inventory",{"action":"pickup","args":{"id":"iron_sword","quantity":1}})
+				await wait(0.3)
+				var inventory := Session.inventory_for(Session.local_id())
+				check(inventory.data.items.size() == 1,"Guest pickup snapshot received")
+				if inventory.data.items.size() == 1:
+					Session.request_action("inventory",{"action":"equip","args":{"uid":inventory.data.items[0].uid,"slot":"main_hand"}})
+					await wait(0.3)
+					check(Session.inventory_for(Session.local_id()).data.equipment.has("main_hand"),"Guest equip replicated")
+					check(game.local_player.stats.damage == 12,"Guest equipment stats refreshed")
 				game.local_player.teleport(Vector3(0,0.1,-1.5))
 				await wait(0.4)
 				Session.request_action("buy",{"shop":1})

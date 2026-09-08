@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="ItemDefinition" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://inventory/item_definition.gd" id="1"]
+[ext_resource type="Texture2D" path="res://items/icons/magic_scroll.svg" id="2"]
+
+[resource]
+script = ExtResource("1")
+icon = ExtResource("2")
+id = "magic_scroll"
+display_name = "Magic Scroll"
+description = "Supplied by Pip's stock and sundries."
+category = "Magic"
+grid_size = Vector2i(1, 2)
+max_stack = 20
+value = 12
+weight = 0.2

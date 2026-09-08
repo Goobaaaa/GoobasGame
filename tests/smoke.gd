@@ -63,6 +63,19 @@ func _ready() -> void:
 	await frame_wait()
 	check(Session.state.purchased_shop == 1 and Session.state.money == 700,"Shop purchase charges once")
 	check(game.world.imp != null,"Purchase spawns IMP")
+	check(game.ui.modal_kind == "shop_naming" and game.ui.shop_name_input != null,"Shop naming window appears")
+	game.ui.shop_name_input.text = ""
+	check(game.ui.shop_name_feedback.text != " " and game.ui.shop_name_feedback.text != "","Empty shop name rejected")
+	game.ui.shop_name_input.text = "   "
+	check(game.ui.shop_name_feedback.text != " " and game.ui.shop_name_feedback.text != "","Whitespace-only shop name rejected")
+	check(ShopNaming.validate("A".repeat(31)) != "","Overlong shop name rejected")
+	game.ui.shop_name_input.text = "The Silver Griffin"
+	for child in game.ui.content.get_children():
+		if child is Button and child.name == "ConfirmShopName":
+			child.pressed.emit()
+			break
+	await frame_wait()
+	check(Session.state.shop_name == "The Silver Griffin" and game.world.shop_signs[1].text == "THE SILVER GRIFFIN","Shop name updates the exterior sign")
 	Session.request_action("buy",{"shop":1})
 	check(Session.state.money == 700,"Duplicate purchase rejected")
 	await capture("02_street")
@@ -111,9 +124,24 @@ func _ready() -> void:
 	await frame_wait()
 	game.ui.show_stock()
 	check(game.ui.order_labels.size() == 8,"Eight stock products in UI")
+	check(game.ui.stock_panel.cards.size() == 8 and game.ui.stock_panel.grid.columns >= 1,"Stock is displayed as a responsive card grid")
+	for id in Catalog.PRODUCTS: check(ItemRegistry.get_item(id).icon != null,"Stock card icon: " + id)
+	var potion_card: StockItemCard = game.ui.stock_panel.cards["health_potion"]
+	potion_card.quantity_input.value = 3
+	check("24" in potion_card.total_label.text and not potion_card.buy_button.disabled,"Card quantity and purchase total update")
+	check(potion_card._make_custom_tooltip(potion_card._get_tooltip(Vector2.ZERO)) != null,"Stock card reuses item tooltip")
+	potion_card.quantity_input.value = 0
+	var immediate_gold := int(Session.state.money)
+	potion_card.quantity_input.value = 1
+	potion_card.buy_button.pressed.emit()
+	await frame_wait()
+	var bought_potion := false
+	for item in Session.inventory_for(1).data.items:
+		if item.id == "health_potion": bought_potion = true
+	check(Session.state.money == immediate_gold - 8 and bought_potion,"Card Buy adds items and charges atomically")
 	Session.request_action("order",{"id":"health_potion","quantity":3})
 	await frame_wait()
-	check(Session.state.ordered_stock.get("health_potion",0) == 3 and Session.state.money == 616,"Order quantity, payment, and ledger")
+	check(Session.state.ordered_stock.get("health_potion",0) == 3 and Session.state.money == 608,"Order quantity, payment, and ledger")
 	var gold: int = Session.state.money
 	Session.request_action("order",{"id":"iron_sword","quantity":99})
 	check(Session.state.money == gold,"Unaffordable order rejected")
@@ -122,15 +150,15 @@ func _ready() -> void:
 	await capture("04_stock")
 	Session.save_game()
 	var data := SaveStore.read_save()
-	check(data.money == 616 and data.furniture.size() == 1 and data.ordered_stock.health_potion == 3,"Save round trip")
+	check(data.money == 608 and data.furniture.size() == 1 and data.ordered_stock.health_potion == 3 and data.shop_name == "The Silver Griffin","Save round trip")
 	Session.leave()
 	check(Session.start_host(false,false) == OK,"Continue loads save")
 	await frame_wait()
-	check(game.world.imp != null and game.world.interior.furniture_root.get_child_count() == 1,"Loaded world restores shop, IMP, and furniture")
+	check(game.world.imp != null and game.world.interior.furniture_root.get_child_count() == 1 and game.world.shop_signs[1].text == "THE SILVER GRIFFIN","Loaded world restores shop, IMP, name, and furniture")
 	check(game.local_player.position.distance_to(Vector3(1.9,0,-1)) < 0.3,"Player position restored")
 	game.local_player.teleport(Vector3(12,0.1,4))
 	Session.request_action("order",{"id":"bread","quantity":1})
-	check(Session.state.money == 616,"Remote stock order rejected")
+	check(Session.state.money == 608,"Remote stock order rejected")
 	Session.leave()
 	# Corrupt primary falls back to previous valid backup.
 	var file := FileAccess.open(SaveStore.path,FileAccess.WRITE)

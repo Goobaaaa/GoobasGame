@@ -1,7 +1,7 @@
 class_name FurnitureFactory
 extends RefCounted
 ## GLBs carry visuals only; catalog dimensions define placement/collision.
-static func create(id: String, ghost: bool) -> Node3D:
+static func create(id: String, ghost: bool, entry: Dictionary = {}) -> Node3D:
 	var root := Node3D.new()
 	var d: Dictionary = Catalog.FURNITURE[id]
 	var path := "res://assets/furniture/" + id + ".glb"
@@ -17,7 +17,12 @@ static func create(id: String, ghost: bool) -> Node3D:
 	visual.rotation.y = PI
 	visual.position.y += lift
 	if not ghost:
-		var body := StaticBody3D.new()
+		var body: StaticBody3D
+		if not entry.is_empty() and not SaleStock.definition(entry).is_empty():
+			body = Interactable.new()
+			body.kind = "sale_platform"
+			body.platform_id = SaleStock.key(entry)
+		else: body = StaticBody3D.new()
 		root.add_child(body)
 		var c := CollisionShape3D.new()
 		var shape := BoxShape3D.new()
@@ -25,6 +30,7 @@ static func create(id: String, ghost: bool) -> Node3D:
 		c.shape = shape
 		c.position.y = d.height/2.0 + lift
 		body.add_child(c)
+		if not entry.is_empty() and not SaleStock.definition(entry).is_empty(): SaleDisplayVisual.build(root,entry)
 	return root
 
 static func tint(node: Node, color: Color) -> void:

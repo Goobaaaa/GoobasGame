@@ -37,7 +37,7 @@ func _ready() -> void:
 	get_tree().auto_accept_quit = false
 
 func setup_input() -> void:
-	var keys := {"forward":KEY_W,"back":KEY_S,"left":KEY_A,"right":KEY_D,"jump":KEY_SPACE,"interact":KEY_E,"build":KEY_B,"rotate":KEY_R,"save":KEY_F5}
+	var keys := {"forward":KEY_W,"back":KEY_S,"left":KEY_A,"right":KEY_D,"jump":KEY_SPACE,"interact":KEY_E,"build":KEY_B,"rotate":KEY_R,"save":KEY_F5,"inventory":KEY_I}
 	for action in keys:
 		if not InputMap.has_action(action): InputMap.add_action(action)
 		var event := InputEventKey.new()
@@ -106,6 +106,13 @@ func _process(_delta: float) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.echo: return
+	if Session.active and event.is_action_pressed("inventory"):
+		if ui.inventory_panel.visible: ui.close()
+		elif not ui.modal_open():
+			placement.cancel()
+			ui.show_inventory()
+		get_viewport().set_input_as_handled()
+		return
 	if event.is_action_pressed("ui_cancel"):
 		if not Session.active: return
 		if placement.selected != "": placement.cancel()
@@ -128,15 +135,18 @@ func _unhandled_input(event: InputEvent) -> void:
 		var target := local_player.look_target()
 		if target == null: return
 		match target.kind:
+			"sale_platform": ui.show_sale_platform(target.platform_id)
+			"delivery": ui.show_inventory(true,"delivery")
+			"supplies": ui.show_inventory(true)
+			"ground_loot": ui.show_inventory(true,"ground:" + target.loot_uid)
 			"imp": ui.show_stock()
 			"exit": Session.request_action("exit")
 			"shop":
 				if Session.state.purchased_shop == target.shop_id: Session.request_action("enter",{"shop":target.shop_id})
 				elif Session.state.purchased_shop == -1: ui.show_purchase(target.shop_id)
-				else: ui.notify("Your co-op already owns another shop.")
+				else: ui.notify("You already own another shop.")
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		if Session.active: Session.leave()
 		get_tree().quit()
-

@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="BackpackDefinition" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://inventory/backpack_definition.gd" id="1"]
+
+[ext_resource type="Texture2D" path="res://items/icons/large_backpack.svg" id="2"]
+
+[resource]
+script = ExtResource("1")
+icon = ExtResource("2")
+id = "large_backpack"
+display_name = "Large Backpack"
+description = "A large backpack from the Lantern Lane adventurer supplies."
+category = "Backpack"
+grid_size = Vector2i(2, 4)
+max_stack = 1
+value = 10
+weight = 1.0
+equipment_slots = PackedStringArray("back")
+modifiers = {}
+inventory_size = Vector2i(10, 6)

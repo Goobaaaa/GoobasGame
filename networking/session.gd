@@ -1,4 +1,5 @@
 extends Node
+const ShopName = preload("res://shops/shop_naming.gd")
 ## One shared co-op business. Server validates all economy and placement requests.
 ## Movement uses owner prediction + server relay; this LAN prototype is not anti-cheat.
 signal started
@@ -9,6 +10,8 @@ signal pose_changed(id: int, pos: Vector3, yaw: float, pitch: float)
 signal teleported(pos: Vector3)
 signal message(text: String)
 const PORT = 24567
+## Multiplayer is suspended while the single-player foundation is developed.
+const MULTIPLAYER_ENABLED = false
 var state: Dictionary = SaveStore.fresh()
 var players: Dictionary = {}
 var active := false
@@ -16,6 +19,8 @@ var online := false
 var joining := false
 var join_elapsed := 0.0
 var save_elapsed := 0.0
+var delivery_poll := 0.0
+var ready_delivery_ids: Array = []
 
 func _ready() -> void:
 	multiplayer.connected_to_server.connect(_connected)
@@ -28,6 +33,10 @@ func _process(delta: float) -> void:
 		join_elapsed += delta
 		if join_elapsed > 10: _failed()
 	if active and multiplayer.is_server():
+		delivery_poll += delta
+		if delivery_poll >= 1.0:
+			delivery_poll = 0.0
+			refresh_deliveries()
 		save_elapsed += delta
 		if save_elapsed > 20:
 			save_elapsed = 0
@@ -37,17 +46,33 @@ func local_id() -> int:
 	return multiplayer.get_unique_id()
 
 func start_host(fresh: bool, lan: bool) -> Error:
+	if lan and not MULTIPLAYER_ENABLED: return ERR_UNAVAILABLE
 	if active or joining: return ERR_ALREADY_IN_USE
 	var loaded := SaveStore.fresh() if fresh else SaveStore.read_save()
 	if loaded.is_empty(): return ERR_FILE_CORRUPT
-	var peer := ENetMultiplayerPeer.new()
 	if lan:
+		var peer := ENetMultiplayerPeer.new()
 		var err := peer.create_server(PORT, 7)
 		if err != OK: return err
 		multiplayer.multiplayer_peer = peer
 	else:
 		multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
 	state = loaded
+	if not state.has("sale_stock"): state.sale_stock = {}
+	if not state.has("ground_loot"): state.ground_loot = []
+	if not state.has("shop_name"): state.shop_name = ""
+	# Prior versions charged for ledger stock but had no physical delivery/pickup.
+	if not state.has("deliveries"):
+		state.deliveries = []
+		var legacy: Dictionary = {}
+		for product in state.ordered_stock:
+			if state.ordered_stock[product] > 0: legacy[product] = state.ordered_stock[product]
+		if not legacy.is_empty(): state.deliveries.append(DeliveryOrders.create(legacy,Time.get_unix_time_from_system()))
+	ready_delivery_ids = []
+	if not state.has("inventories"): state.inventories = {}
+	# Peer IDs are connection identities; only the host has a persistent identity today.
+	var host_inventory: Dictionary = state.inventories.get("1", PlayerInventory.new().data)
+	state.inventories = {"1":host_inventory}
 	online = lan
 	active = true
 	var p: Array = state.player_position
@@ -63,6 +88,7 @@ func start_host(fresh: bool, lan: bool) -> Error:
 	return OK
 
 func join_game(address: String) -> Error:
+	if not MULTIPLAYER_ENABLED: return ERR_UNAVAILABLE
 	if active or joining: return ERR_ALREADY_IN_USE
 	var peer := ENetMultiplayerPeer.new()
 	var err := peer.create_client(address.strip_edges(), PORT)
@@ -83,7 +109,9 @@ func hello() -> void:
 	var id := multiplayer.get_remote_sender_id()
 	if players.has(id): return
 	players[id] = {"pos":Vector3(1,0.2,4),"yaw":0.0,"pitch":0.0}
+	state.inventories[str(id)] = PlayerInventory.new().data
 	begin_client.rpc_id(id,state,players)
+	receive_state.rpc(state)
 	receive_roster.rpc(players)
 	roster_changed.emit()
 
@@ -181,15 +209,108 @@ func execute_action(id: int, kind: String, data: Dictionary) -> void:
 	var old := state.duplicate(true)
 	var error := ""
 	match kind:
+		"sale_platform":
+			var entry: Dictionary = {}
+			var platform := str(data.get("platform",""))
+			for furniture in state.furniture:
+				if SaleStock.key(furniture) == platform: entry = furniture
+			if entry.is_empty() or not in_shop(id) or not near(id,GridRules.center(entry,Vector3(-3,0,24)),3.5):
+				error = "Approach a sale platform inside your shop."
+			elif not data.get("args",{}) is Dictionary: error = "Invalid stocking request."
+			else:
+				var inventory := inventory_for(id)
+				var listings: Array = state.sale_stock.get(platform,[]).duplicate(true)
+				error = SaleStock.apply(inventory,listings,entry,str(data.get("action","")),data.get("args",{}))
+				if error.is_empty():
+					state.inventories[str(id)] = inventory.data
+					state.sale_stock[platform] = listings
+		"collect_delivery":
+			var product := str(data.get("id",""))
+			var quantity := int(data.get("quantity",0))
+			var order: Dictionary = {}
+			for candidate in state.deliveries:
+				if candidate.uid == str(data.get("delivery","")): order = candidate
+			if state.purchased_shop < 0 or not near(id,FantasyWorld.delivery_position(int(state.purchased_shop)),3.5):
+				error = "Move closer to the delivery box beneath Pip."
+			elif order.is_empty() or order.due_at > Time.get_unix_time_from_system(): error = "That delivery has not arrived."
+			elif quantity < 1 or quantity > 99 or quantity > int(order.contents.get(product,0)): error = "That quantity is not available."
+			else:
+				var inventory := inventory_for(id)
+				var placement: Dictionary = {}
+				for key in ["x", "y", "rotated"]:
+					if data.has(key): placement[key] = data[key]
+				if not inventory.add_item(product,quantity,{},placement): error = "That space is occupied or there is not enough inventory space. Items remain in the delivery box."
+				else:
+					state.inventories[str(id)] = inventory.data
+					order.contents[product] -= quantity
+					if order.contents[product] == 0: order.contents.erase(product)
+					if order.contents.is_empty(): state.deliveries.erase(order)
+		"collect_ground_loot":
+			var chest_uid := str(data.get("chest", ""))
+			var item_uid := str(data.get("item_uid", ""))
+			var chest: Dictionary = {}
+			for candidate in state.get("ground_loot", []):
+				if candidate.uid == chest_uid: chest = candidate
+			var chest_position := _ground_loot_position(chest)
+			var ground_item: Dictionary = {}
+			for candidate in chest.get("contents", []):
+				if candidate.uid == item_uid: ground_item = candidate
+			if chest.is_empty() or not near(id,chest_position,3.5):
+				error = "Move closer to the dropped item chest."
+			elif ground_item.is_empty():
+				error = "That dropped item is no longer available."
+			else:
+				var quantity := int(data.get("quantity",0))
+				if quantity < 1 or quantity > 99 or quantity > int(ground_item.quantity):
+					error = "That quantity is not available."
+				else:
+					var inventory := inventory_for(id)
+					var placement: Dictionary = {}
+					for key in ["x", "y", "rotated"]:
+						if data.has(key): placement[key] = data[key]
+					if not inventory.add_item(ground_item.id,quantity,ground_item.properties,placement,ground_item.uid,ItemInstance.rarity(ground_item)):
+						error = "That space is occupied or there is not enough inventory space. Items remain in the chest."
+					else:
+						state.inventories[str(id)] = inventory.data
+						ground_item.quantity -= quantity
+						if ground_item.quantity == 0: chest.contents.erase(ground_item)
+						if chest.contents.is_empty(): state.ground_loot.erase(chest)
+		"inventory":
+			var action_args: Variant = data.get("args", {})
+			if not action_args is Dictionary: return
+			var action := str(data.get("action", ""))
+			if action == "drop":
+				var inventory := inventory_for(id)
+				var dropped := inventory.take_item(str(action_args.get("uid","")),int(action_args.get("quantity",0)))
+				if dropped.is_empty():
+					error = "Only backpack items can be dropped."
+				else:
+					var position := _drop_position(id)
+					state.inventories[str(id)] = inventory.data
+					state.ground_loot.append({"uid":_new_uid("ground"),"position":[position.x,position.y,position.z],"contents":[dropped]})
+			elif action == "pickup" and not near(id,AdventurerSupplies.POSITION,3.5):
+				error = "Move closer to the adventurer supplies chest."
+			else:
+				var inventory := inventory_for(id)
+				error = inventory.transact(action,action_args)
+				if error.is_empty(): state.inventories[str(id)] = inventory.data
 		"buy":
 			var shop_id := int(data.get("shop",-1))
 			if shop_id < 0 or shop_id > 2 or state.purchased_shop != -1:
-				error = "Only one shop can be owned by this co-op."
+				error = "You can only own one shop."
 			elif not near(id,FantasyWorld.shop_position(shop_id)): error = "Move closer to the shop door."
 			elif state.money < Catalog.SHOP_PRICE: error = "Not enough gold."
 			else:
 				state.money -= Catalog.SHOP_PRICE
 				state.purchased_shop = shop_id
+				state.shop_name = ""
+		"set_shop_name":
+			var shop_name: String = ShopName.normalize(str(data.get("name","")))
+			if state.purchased_shop < 0: error = "Purchase a shop before naming it."
+			elif not near(id,FantasyWorld.shop_position(int(state.purchased_shop)),4.5): error = "Move closer to your shop before naming it."
+			else:
+				error = ShopName.validate(shop_name)
+				if error.is_empty(): state.shop_name = shop_name
 		"enter":
 			var shop_id := int(data.get("shop",-1))
 			if shop_id != state.purchased_shop or shop_id < 0 or not near(id,FantasyWorld.shop_position(shop_id)):
@@ -221,21 +342,41 @@ func execute_action(id: int, kind: String, data: Dictionary) -> void:
 					state.money -= Catalog.FURNITURE[fid].price
 					state.furniture.append(entry)
 		"order":
-			var product := str(data.get("id",""))
-			var quantity := int(data.get("quantity",0))
+			var contents: Variant = data.get("items",{str(data.get("id","")):data.get("quantity",0)})
+			var total := DeliveryOrders.quote(contents) if contents is Dictionary else -1
 			if state.purchased_shop < 0 or not near(id,FantasyWorld.imp_position(int(state.purchased_shop))):
 				error = "Visit Pip outside your shop to order."
-			elif not Catalog.PRODUCTS.has(product) or quantity < 1 or quantity > 99:
+			elif total < 0:
 				error = "Select a product and quantity from 1 to 99."
+			elif state.money < total: error = "Not enough gold."
 			else:
-				var total: int = Catalog.PRODUCTS[product].price * quantity
-				if state.money < total: error = "Not enough gold."
-				else:
+				var inventory := inventory_for(id)
+				for product in contents:
+					if not inventory.add_item(product,int(contents[product])):
+						error = "Not enough inventory space."
+						break
+				if error.is_empty():
 					state.money -= total
-					state.ordered_stock[product] = int(state.ordered_stock.get(product,0)) + quantity
+					state.deliveries.append(DeliveryOrders.create(contents,Time.get_unix_time_from_system()))
+					for product in contents:
+						state.ordered_stock[product] = int(state.ordered_stock.get(product,0)) + int(contents[product])
+		"buy_item":
+			var product_id := str(data.get("id",""))
+			var quantity := int(data.get("quantity",0))
+			var total := DeliveryOrders.quote({product_id:quantity})
+			if state.purchased_shop < 0 or not near(id,FantasyWorld.imp_position(int(state.purchased_shop))):
+				error = "Visit Pip outside your shop to buy stock."
+			elif total < 0: error = "Select a product and quantity from 1 to 99."
+			elif state.money < total: error = "Not enough gold."
+			else:
+				var inventory := inventory_for(id)
+				if not inventory.add_item(product_id,quantity): error = "Not enough inventory space."
+				else:
+					state.inventories[str(id)] = inventory.data
+					state.money -= total
 		"save":
 			var save_result := save_game(false)
-			reply(id,"Saved • host world" if save_result == OK else "Save failed: " + error_string(save_result))
+			reply(id,"Game saved" if save_result == OK else "Save failed: " + error_string(save_result))
 			return
 		_:
 			return
@@ -250,11 +391,39 @@ func execute_action(id: int, kind: String, data: Dictionary) -> void:
 		return
 	state_changed.emit()
 	if online: receive_state.rpc(state)
-	reply(id,{"buy":"Shop purchased! Pip has arrived. Press E again to enter.", "place":"Furniture placed • saved", "order":"Stock ordered • saved (delivery comes later)"}.get(kind,"Saved"))
+	reply(id,{"buy":"Shop purchased! Choose its name to get started.", "set_shop_name":"Shop name saved.", "buy_item":"Purchase added to your backpack.", "place":"Furniture placed • saved", "order":"Order placed • delivery beneath Pip in 5 minutes", "collect_delivery":"Items collected • saved", "collect_ground_loot":"Items collected • saved", "inventory":"Inventory updated • saved"}.get(kind,"Saved"))
+
+func refresh_deliveries() -> void:
+	var current: Array = []
+	for order in DeliveryOrders.ready(state.get("deliveries",[]),Time.get_unix_time_from_system()): current.append(order.uid)
+	if current == ready_delivery_ids: return
+	var arrived := false
+	for uid in current:
+		if uid not in ready_delivery_ids: arrived = true
+	ready_delivery_ids = current
+	state_changed.emit()
+	if arrived: message.emit("Your delivery has arrived! Collect it from the box beneath Pip.")
 
 func in_shop(id: int) -> bool:
 	var p: Vector3 = players[id].pos
 	return absf(p.x) < 3.1 and p.z >= 24 and p.z <= 30.1
+
+func inventory_for(id: int) -> PlayerInventory:
+	return PlayerInventory.new(state.get("inventories",{}).get(str(id),{}))
+
+func _new_uid(prefix: String) -> String:
+	return "%s:%s" % [prefix,Crypto.new().generate_random_bytes(16).hex_encode()]
+
+func _drop_position(id: int) -> Vector3:
+	var player: Dictionary = players[id]
+	var forward := Vector3(-sin(float(player.yaw)),0,-cos(float(player.yaw)))
+	var position: Vector3 = player.pos + forward * 1.2
+	position.y = 0.35
+	return position
+
+func _ground_loot_position(chest: Dictionary) -> Vector3:
+	if chest.is_empty() or not chest.get("position",[]) is Array or chest.position.size() != 3: return Vector3.INF
+	return Vector3(float(chest.position[0]),float(chest.position[1]),float(chest.position[2]))
 
 func move_player(id: int, pos: Vector3) -> void:
 	players[id].pos = pos
@@ -282,5 +451,5 @@ func save_game(feedback: bool = true) -> Error:
 	update_saved_position()
 	var err := SaveStore.write(state)
 	if feedback or err != OK:
-		message.emit("Saved • host world" if err == OK else "Save failed: " + error_string(err))
+		message.emit("Game saved" if err == OK else "Save failed: " + error_string(err))
 	return err

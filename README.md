@@ -8,12 +8,39 @@ Open **project.godot** in Godot 4 and press **F6** on `scenes/main.tscn`, or **F
 3. Press **E** at the same door to enter. **B** opens the furniture catalog.
 4. Choose furniture, look down at the grid, rotate with **R**, then left-click a green preview to place it.
 5. Look at the inside door and press **E** to leave. Find **Pip**, the floating purple IMP beside your shop, and press **E**.
-6. Choose stock quantities and click **Order**. Your purse and order ledger update immediately.
-7. **F5** saves; **Esc → Return to Main Menu → Continue** restores the business.
+6. Talk to Pip, choose quantities in the icon-card catalogue, check each live total, and click **BUY** to add a purchase immediately to your backpack. Use **PLACE DELIVERY ORDER** for the retained five-minute delivery flow, then collect the box beneath Pip with **E**.
+7. On the first purchase, name your shop. The name is saved and appears on the storefront sign.
+8. **F5** saves; **Esc → Return to Main Menu → Continue** restores the business.
 
 **Controls:** WASD move · mouse look · Space jump · E interact · B furniture · R rotate 90° · left mouse place · right mouse cancel · Esc cancel/close/menu · F5 save.
 
-## LAN co-op
+## Player inventory and equipment
+
+Press **I** to open your backpack and equipment panel. Approach the **Adventurer supplies** chest beside the starting position and press **E** to open the panel with a **GROUND ITEMS** grid. Items use the same-sized cells as the backpack and show only their icons and quantities; hover an item for its name and details. Drag them into the backpack grid to collect them. Drag a backpack item outside the inventory to create a loot chest on the ground; approach it and press **E** to loot it again. **R** or right-click during a drag rotates, and **Shift-drag** splits a stack. Equipping the Large Backpack first makes room to try all examples. The delivery box beneath Pip uses the same ground-items grid. Inventory saves through the existing host save system.
+
+See [the inventory guide](inventory/README.md) for resource creation, backpack sizing, stat modifiers, architecture, controls, save format, LAN identity limitations, and tests.
+
+## Deliveries and supply boxes
+
+Pip's basket displays the total and available gold and blocks unaffordable orders. Each saved order arrives after **five real-world minutes**, including time while the game is closed. The ledger shows the next arrival countdown. All arrived orders share a box beneath Pip; pending orders cannot be collected early. Press **E** on the box and choose pickup quantities beside each item. If your backpack is full, the items remain in the box.
+
+The delivery box disappears once all arrived goods have been collected and reappears when another order arrives. The Adventurer supplies chest also disappears after its last item is collected. Both empty states persist across Continue; starter supplies are not refilled on login.
+
+Implementation: `items/delivery_orders.gd` owns prices/validation and five-minute deadlines (`DELAY_SECONDS = 300`); `ui/stock_order_panel.gd` and `ui/stock_item_card.gd` own the responsive catalogue; the existing session commits immediate `buy_item` purchases, inventory-space preflight, delivery orders and collection with the existing backed-up save system. `scripts/world.gd` derives box presence from remaining contents and updates the saved shop sign. All eight shop products have definitions and icons in `items/definitions`/`items/icons`. Old paid ledger-only saves are converted to a delivery without charging again. The cumulative `ordered_stock` ledger remains history, while `deliveries` stores remaining uncollected quantities.
+
+Delivery tests are included in `tests/run_tests.ps1`; they fast-forward saved test deadlines rather than waiting five minutes or changing the production delay.
+
+## Single-player development
+
+## Stocking tables and shelves
+
+Approach placed display furniture inside your shop and press **E**. Select backpack items, quantity and sell price, then **Stock**. The panel shows reference buy price, sell price and estimated profit, and lets you reprice or return unsold stock. Each unit takes display space according to its size; full or unsuitable displays reject the transfer safely. Stocked furniture shows individual temporary packages and a **FOR SALE** indicator. Stock and prices save with the game. See [sale-display authoring and architecture](shops/SALE_DISPLAYS.md) for capacities and the future 3D-model hook.
+
+## Single-player development
+
+Multiplayer is currently disabled. The menus offer New Game and Continue only, and the session rejects LAN hosting/joining before creating a connection. Existing local saves still load. The underlying networking code and historical LAN tests are retained for future work; the active test runner exercises single-player gameplay and verifies multiplayer is blocked.
+
+### Historical LAN implementation (disabled)
 On the host, choose **Host Game • LAN**. It loads the local save, or creates one if none exists. To host a fresh business, first use New Game, return to the menu, then Host Game.
 
 On another instance/computer, enter the host's LAN IPv4 address and choose **Join Game**. Use **127.0.0.1** for two instances on this computer. The server uses **UDP 24567**, with up to **8 players**. Allow Godot on the Windows private-network firewall if prompted. There is no discovery, matchmaking, account service, or port forwarding setup.
@@ -29,9 +56,10 @@ The co-op shares **one purse, one purchased shop, furniture, and ordered stock**
 - `shops/interactable.gd`, `shops/imp.gd`: doors, prompts, and animated IMP.
 - `furniture/placement.gd`, `furniture/furniture_factory.gd`: colored ghost, rotation, catalog-based collision, GLB loading.
 - `items/catalog.gd`: stable IDs, prices, categories, furniture footprints and eight stock products.
+- `inventory/item_rarity.gd`, `items/loot_generator.gd`: shared rarity colours/scaling/progression weights and the future generated-loot entry point.
 - `networking/session.gd`: ENet lifecycle, roster/poses, shared state, host transaction validation.
 - `saves/save_store.gd`: schema validation, JSON loading, temporary writes, previous-save backup.
-- `ui/game_ui.gd`: main/pause/purchase/furniture/stock menus, HUD and feedback.
+- `ui/game_ui.gd`, `ui/stock_order_panel.gd`, `ui/stock_item_card.gd`: main/pause/purchase/naming/furniture/stock menus, HUD, feedback and icon-card purchasing.
 - `assets/furniture/*.glb`: six original low-poly furniture models generated through Blender MCP.
 - `assets/blender/furniture_prototypes.blend`: isolated editable Blender source; original open scene preserved.
 - `tests/`: repeatable gameplay and multi-process LAN tests, logs, and captured screens.
@@ -53,7 +81,7 @@ Footprints cannot overlap walls, other furniture, the orange entrance area, or a
 To add furniture, add a stable catalog entry and a matching metre-scale GLB at `assets/furniture/<id>.glb`. Use a floor-centered origin. Imported Blender models are rotated so their back aligns with grid +Z at rotation zero. The catalog owns dimensions and prices; GLBs contain only visuals. Missing GLBs intentionally fall back to clearly marked box geometry.
 
 ## Saves
-Normal play writes **user://saves/lantern_lane.json** (under Godot's app data for this project). The save includes version, money, purchased_shop, host player_position, furniture cell records, and ordered_stock quantities. Transactions, a 20-second autosave, F5, leaving, and window close write the host save.
+Normal play writes **user://saves/lantern_lane.json** (under Godot's app data for this project). The save includes version, money, purchased_shop, the chosen `shop_name`, host player_position, furniture cell records, ordered_stock quantities, deliveries, and inventory item instances including persistent IDs and rarity. Transactions, a 20-second autosave, F5, leaving, and window close write the host save.
 
 Writes use a temporary file and keep the previous valid file as `.bak`; loading can recover from that backup. New Game asks before replacing an existing save. There is one local save slot, and the backup is the previous write rather than a permanent archive.
 
@@ -70,7 +98,6 @@ The smoke test exercises actual movement/jump, interaction UI, purchase, IMP cre
 The networking approach follows [Godot's high-level multiplayer documentation](https://docs.godotengine.org/en/4.7/tutorials/networking/high_level_multiplayer.html).
 
 ## Prototype limits and next step
-The street, avatars, IMP and product icons are deliberate placeholders. Furniture is simple Blender art. Interiors use door teleports; only one of the three storefronts can be purchased per co-op. There is no furniture removal/refund/moving, guest save identity, host migration, anti-cheat movement, physical stock delivery, customer AI, selling, combat, crafting, quests, or complex economy.
+The street, avatars, IMP and product icons are deliberate placeholders. Furniture is simple Blender art. Interiors use door teleports; only one storefront can be purchased. Multiplayer is disabled. There is no furniture removal/refund/moving, customer AI, selling, combat, crafting, quests, or complex economy yet.
 
-**Recommended next step:** add a physical stock-delivery crate and shelf stocking, using the existing product IDs and order ledger. This creates a useful stock lifecycle before introducing customers and sales.
-
+**Next stock-system extension:** customer shopping and checkout, building on saved shelf listings and prices.
