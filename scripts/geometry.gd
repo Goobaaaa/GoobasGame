@@ -44,7 +44,7 @@ static func label(parent: Node3D, pos: Vector3, title: String, size: int = 32) -
 
 static func roof(parent: Node3D, pos: Vector3, width: float, depth: float) -> void:
 	# Simple pitched triangular prism, kept separate from gameplay collision.
-	# The roof now has explicit UVs and a shared stylised material so it can scale
+	# The roof now has explicit UVs and a stylised material so it can scale
 	# beyond the original flat-colour blockout.
 	var w := width / 2.0
 	var d := depth / 2.0
@@ -66,7 +66,8 @@ static func roof(parent: Node3D, pos: Vector3, width: float, depth: float) -> vo
 	surface.generate_normals()
 	var mesh := MeshInstance3D.new()
 	mesh.mesh = surface.commit()
-	var mat := MaterialLibrary.get_material("wood")
+	# Duplicate before altering culling so the shared wood material remains unchanged.
+	var mat := MaterialLibrary.get_material("wood").duplicate() as StandardMaterial3D
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mesh.material_override = mat
 	parent.add_child(mesh)
