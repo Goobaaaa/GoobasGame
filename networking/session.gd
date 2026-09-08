@@ -348,18 +348,15 @@ func execute_action(id: int, kind: String, data: Dictionary) -> void:
 				error = "Visit Pip outside your shop to order."
 			elif total < 0:
 				error = "Select a product and quantity from 1 to 99."
-			elif state.money < total: error = "Not enough gold."
+			elif state.money < total:
+				error = "Not enough gold."
 			else:
-				var inventory := inventory_for(id)
+				# Delivery orders reserve no backpack space. Inventory capacity is checked
+				# only when the player actually collects items from the arrived box.
+				state.money -= total
+				state.deliveries.append(DeliveryOrders.create(contents,Time.get_unix_time_from_system()))
 				for product in contents:
-					if not inventory.add_item(product,int(contents[product])):
-						error = "Not enough inventory space."
-						break
-				if error.is_empty():
-					state.money -= total
-					state.deliveries.append(DeliveryOrders.create(contents,Time.get_unix_time_from_system()))
-					for product in contents:
-						state.ordered_stock[product] = int(state.ordered_stock.get(product,0)) + int(contents[product])
+					state.ordered_stock[product] = int(state.ordered_stock.get(product,0)) + int(contents[product])
 		"buy_item":
 			var product_id := str(data.get("id",""))
 			var quantity := int(data.get("quantity",0))

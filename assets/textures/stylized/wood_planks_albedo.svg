@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+ <filter id="grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="0.015 0.09" numOctaves="3" seed="11"/><feColorMatrix values="0.45 0 0 0 0.32  0 0.25 0 0 0.18  0 0 0.12 0 0.08  0 0 0 0.32 0"/></filter>
+ <linearGradient id="w" x1="0" x2="1"><stop stop-color="#6f4428"/><stop offset=".45" stop-color="#a6673b"/><stop offset="1" stop-color="#75462a"/></linearGradient>
+ <pattern id="p" width="1024" height="128" patternUnits="userSpaceOnUse"><rect width="1024" height="128" fill="url(#w)"/><rect y="123" width="1024" height="5" fill="#3e281b"/><path d="M0 32 C170 2 310 58 470 30 S790 16 1024 44 M0 78 C220 112 390 58 610 90 S850 112 1024 72" fill="none" stroke="#5a351f" stroke-width="7" opacity=".5"/><ellipse cx="220" cy="64" rx="40" ry="18" fill="#4f2f1d" opacity=".65"/><ellipse cx="220" cy="64" rx="23" ry="9" fill="#8c5631" opacity=".5"/></pattern>
+</defs>
+<rect width="1024" height="1024" fill="url(#p)"/><rect width="1024" height="1024" filter="url(#grain)" opacity=".34"/>
+</svg>
